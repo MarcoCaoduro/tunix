@@ -477,12 +477,22 @@ class PeftTrainer:
       )
 
     if self._mode == metrics_logger.Mode.TRAIN:
+      # Marco: Enhanced training logging with timing and batch size info
+      timing_info = ""
+      if step_time_delta is not None:
+          timing_info += f" - step time: {step_time_delta:.4f} sec"
+      if batch_size is not None:
+          timing_info += f" - batch size: {batch_size}"
+      #
+
       logging.info(
-          "Train step %d training loss: %f  - training perplexity: %f",
+          "Train step %d training loss: %f - training perplexity: %f%s",
           step,
           loss,
           perplexity,
+          timing_info,#
       )
+  
     for k, v in (additional_metrics or {}).items():
       self.metrics_logger.log(k, v, self._mode, step)
 
