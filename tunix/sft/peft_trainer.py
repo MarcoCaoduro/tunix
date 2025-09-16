@@ -104,6 +104,7 @@ class _MetricsBuffer:
   step: int
   losses: List[ArrayLike]
   step_time_deltas: List[float]
+  batch_sizes: List[int] = dataclasses.field(default_factory=list)  # Marco: Add this
   additional_metrics: Dict[
       str, Tuple[List[ArrayLike], Callable[[ArrayLike], ArrayLike]]
   ] = dataclasses.field(default_factory=dict)
@@ -118,6 +119,12 @@ class _MetricsBuffer:
     """Returns the mean of the recorded step time deltas for the step."""
     return np.mean(self.step_time_deltas)
 
+  # Marco: 
+  @property
+  def avg_batch_size(self):
+      """Returns the average batch size for the step."""
+      return np.mean(self.batch_sizes) if self.batch_sizes else 0
+  #
 
 def _calculate_global_batch_size(train_example: Any) -> int:
   """Calculates the global batch size from a training example.
@@ -309,8 +316,6 @@ class PeftTrainer:
     Returns:
       The loss and auxiliary data if has_aux is True, otherwise the loss.
     """
-    
-    print('Hello World')
 
     inputs = self.gen_model_input_fn(inputs)
 
@@ -449,12 +454,18 @@ class PeftTrainer:
       step: int | None = None,
       step_time_delta: float | None = None,
       additional_metrics: dict[str, ArrayLike] | None = None,
+      batch_size: int | None = None,  # Marco: Add this parameter
   ):
     """Logs the metrics to the metrics logger and console."""
     perplexity = np.exp(loss)
     self.metrics_logger.log("loss", loss, self._mode, step)
     self.metrics_logger.log("perplexity", perplexity, self._mode, step)
     learning_rate = self._try_get_learning_rate()
+
+    # Marco: Add batch size logging
+    if batch_size is not None:
+        self.metrics_logger.log("batch_size", batch_size, self._mode, step)
+    #
     if learning_rate is not None:
       self.metrics_logger.log("learning_rate", learning_rate, self._mode, step)
     if step_time_delta is not None:
@@ -481,16 +492,24 @@ class PeftTrainer:
       loss: ArrayLike,
       step: int,
       step_time_delta: float = 0.0,
+      batch_size: int | None = None,  # Marco: Add this
   ) -> _MetricsBuffer:
     """Buffers metrics for the current step."""
     if metrics_buffer is None:
       metrics_buffer = _MetricsBuffer(
-          step=step, losses=[loss], step_time_deltas=[step_time_delta]
+          step=step,
+          losses=[loss],
+          step_time_deltas=[step_time_delta],
+          batch_sizes=[batch_size] if batch_size else []  # Marco: Add this
       )
     else:
       assert metrics_buffer.step == step
       metrics_buffer.losses.append(loss)
       metrics_buffer.step_time_deltas.append(step_time_delta or 0)
+      # Marco: Add batch size to existing buffer
+      if batch_size is not None:
+        metrics_buffer.batch_sizes.append(batch_size)
+      #
     return metrics_buffer
 
   def _write_train_metrics(self):
@@ -518,6 +537,7 @@ class PeftTrainer:
         loss=metrics_buffer.loss,
         step=metrics_buffer.step,
         step_time_delta=metrics_buffer.step_time_delta,
+        batch_size=metrics_buffer.avg_batch_size, # Marco
         additional_metrics={
             k: op(v)
             for k, (
@@ -635,6 +655,11 @@ class PeftTrainer:
           self._throttler.wait_for_next()
           if self.training_hooks:
             self.training_hooks.on_train_step_start(self)
+
+          # Marco:  Calculate batch size
+          train_batch_size = _calculate_global_batch_size(train_example)
+          #
+
           train_loss, aux = train_step(
               self.model, self.optimizer, train_example
           )
@@ -649,6 +674,7 @@ class PeftTrainer:
               loss=train_loss,
               step=self._train_steps,
               step_time_delta=step_time_delta,
+              batch_size=train_batch_size,  # Marco: Add this
           )
           # NB: put this after self._buffer_metrics is important
           self._post_process_train_step(aux)
@@ -727,6 +753,9 @@ class PeftTrainer:
     eval_iterator = iter(eval_ds)
     with self._switch_mode(metrics_logger.Mode.EVAL):
       eval_loss, eval_steps = 0, 0
+      # Marco: Add timing for eval steps
+      last_step_completion_time = time.perf_counter()
+      #
       while True:
         if self.data_hooks:
           eval_example = self.data_hooks.load_next_eval_batch(self)
@@ -741,13 +770,28 @@ class PeftTrainer:
         eval_example = self._shard_input(eval_example)
         if self.training_hooks:
           self.training_hooks.on_eval_step_start(self)
+        
+        # Marco: Calculate batch size and time the eval step
+        eval_batch_size = _calculate_global_batch_size(eval_example)
+        #
+
         loss, aux = eval_step_fn(self.model, eval_example)
         loss = jax.lax.stop_gradient(loss)
+        
+        #
+        current_time = time.perf_counter()
+        step_time_delta = current_time - last_step_completion_time
+        last_step_completion_time = current_time
+        #
+
         self._buffered_eval_metrics = self._buffer_metrics(
             self._buffered_eval_metrics,
             loss=loss,
             step=self._train_steps,
+            step_time_delta=step_time_delta, # Marco
+            batch_size=eval_batch_size, # Marco
         )
+        #
         self._post_process_eval_step(aux)
         eval_loss += loss
         eval_steps += 1
@@ -760,11 +804,14 @@ class PeftTrainer:
 
       self._write_metrics(self._buffered_eval_metrics)
       logging.info(
-          "Train step %d eval loss: %f - eval perplexity: %f",
+          "Train step %d eval loss: %f - eval perplexity: %f - eval step time: %f sec - eval batch size: %d",
           self._train_steps,
           self.metrics_logger.get_metric("loss", "eval"),
           self.metrics_logger.get_metric("perplexity", "eval"),
+          self.metrics_logger.get_metric("step_time_sec", "eval"), # M
+          int(self.metrics_logger.get_metric("batch_size", "eval")), # M
       )
+      #
       self._buffered_eval_metrics = None
       if self.training_hooks:
         self.training_hooks.on_eval_step_end(self, eval_loss)
