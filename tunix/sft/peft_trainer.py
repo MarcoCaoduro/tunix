@@ -309,6 +309,9 @@ class PeftTrainer:
     Returns:
       The loss and auxiliary data if has_aux is True, otherwise the loss.
     """
+    
+    print('Hello World')
+
     inputs = self.gen_model_input_fn(inputs)
 
     grad_fn = nnx.value_and_grad(
