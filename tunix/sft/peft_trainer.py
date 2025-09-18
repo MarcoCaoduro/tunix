@@ -486,7 +486,7 @@ class PeftTrainer:
       #
 
       logging.info(
-          "Train step %d training loss: %f - training perplexity: %f%s",
+          "Train step %d training loss: %f - training perplexity: %f - timing info: %s",
           step,
           loss,
           perplexity,
@@ -677,6 +677,8 @@ class PeftTrainer:
           current_time = time.perf_counter()
           step_time_delta = current_time - last_step_completion_time
           last_step_completion_time = current_time
+
+          print("Step: ", self._train_steps, "Time: ", step_time_delta) # M
 
           self._throttler.add_computation(train_loss)
           self._buffered_train_metrics = self._buffer_metrics(
