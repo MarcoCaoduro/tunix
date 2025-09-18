@@ -612,6 +612,8 @@ class PeftTrainer:
     train_iterator = iter(train_ds)
     index = 0
     last_step_completion_time = time.perf_counter()
+    step_time_training = [] # M
+
     with utils.time_measure("Train loop"):
       while True:
         self._prof.maybe_activate(self._iter_steps)
@@ -678,6 +680,8 @@ class PeftTrainer:
           step_time_delta = current_time - last_step_completion_time
           last_step_completion_time = current_time
 
+          step_time_training.append(step_time_delta) # M
+
           self._throttler.add_computation(train_loss)
           self._buffered_train_metrics = self._buffer_metrics(
               self._buffered_train_metrics,
@@ -717,7 +721,11 @@ class PeftTrainer:
     
     # Marco: Log average step time at end of training
     if self._prev_buffered_train_metrics is not None:
-        avg_step_time = self._prev_buffered_train_metrics.step_time_delta
+        if step_time_training:
+          avg_step_time = sum(step_time_training) / len(step_time_training)
+        else:
+          avg_step_time = float('inf')
+          
         avg_batch_size = self._prev_buffered_train_metrics.avg_batch_size
         total_steps = self._train_steps
         logging.info(
