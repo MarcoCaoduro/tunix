@@ -678,8 +678,6 @@ class PeftTrainer:
           step_time_delta = current_time - last_step_completion_time
           last_step_completion_time = current_time
 
-          print("Step: ", self._train_steps, "Time: ", step_time_delta) # M
-
           self._throttler.add_computation(train_loss)
           self._buffered_train_metrics = self._buffer_metrics(
               self._buffered_train_metrics,
@@ -716,6 +714,25 @@ class PeftTrainer:
         self._prof.maybe_deactivate(self._iter_steps)
 
     self._throttler.wait_for_all()
+    
+    # Marco: Log average step time at end of training
+    if self._prev_buffered_train_metrics is not None:
+        avg_step_time = self._prev_buffered_train_metrics.step_time_delta
+        avg_batch_size = self._prev_buffered_train_metrics.avg_batch_size
+        total_steps = self._train_steps
+        logging.info(
+            "Training completed - Total steps: %d - Average step time: %.4f sec - Average batch size: %.1f",
+            total_steps,
+            avg_step_time,
+            avg_batch_size
+        )
+        if avg_batch_size > 0:
+            throughput = avg_batch_size / avg_step_time
+            logging.info("Training throughput: %.2f samples/sec", throughput)
+    else:
+      logging.info('self._prev_buffered_train_metrics is None')
+    #
+    
     if self.training_hooks:
       self.training_hooks.on_train_end(self)
     if not self.is_managed_externally:
