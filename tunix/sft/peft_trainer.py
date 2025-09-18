@@ -486,7 +486,7 @@ class PeftTrainer:
       #
 
       logging.info(
-          "Train step %d training loss: %f - training perplexity: %f - timing info: %s",
+          "Train step %d training loss: %f - training perplexity: %f %s",
           step,
           loss,
           perplexity,
