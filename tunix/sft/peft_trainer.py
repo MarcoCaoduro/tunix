@@ -721,11 +721,11 @@ class PeftTrainer:
     
     # Marco: Log average step time at end of training
     if self._prev_buffered_train_metrics is not None:
-        if step_time_training:
-          avg_step_time = sum(step_time_training) / len(step_time_training)
+        if len(step_time_training) >= 2:
+          avg_step_time = sum(step_time_training[1: ]) / (len(step_time_training) - 1)
         else:
           avg_step_time = float('inf')
-          
+
         avg_batch_size = self._prev_buffered_train_metrics.avg_batch_size
         total_steps = self._train_steps
         logging.info(
